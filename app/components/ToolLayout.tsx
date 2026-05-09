@@ -93,7 +93,7 @@ export default function ToolLayout({
             className="flex items-center gap-2 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors"
           >
             <ArrowLeft size={18} />
-            <span className="text-sm font-medium">AI Store</span>
+            <span className="text-sm font-medium">Agora</span>
           </button>
           <div className="flex items-center gap-3">
             <span className="text-xl">{icon}</span>

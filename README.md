@@ -1,4 +1,4 @@
-# AI Store
+# Agora
 
 A collection of five purpose-built AI tools, each designed for a specific job. No generic chatbot — every tool has a defined role, structured output, and a focused use case.
 
@@ -21,8 +21,8 @@ A collection of five purpose-built AI tools, each designed for a specific job. N
 
 **1. Clone the repo**
 ```bash
-git clone https://github.com/rhyanm/ai-store.git
-cd ai-store
+git clone https://github.com/rhyanm/agora.git
+cd agora
 ```
 
 **2. Install dependencies**

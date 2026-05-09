@@ -115,7 +115,7 @@ export default function Home() {
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
               <Zap size={16} className="text-white" />
             </div>
-            <span className="font-semibold text-lg text-zinc-900 dark:text-white tracking-tight">AI Store</span>
+            <span className="font-semibold text-lg text-zinc-900 dark:text-white tracking-tight">Agora</span>
           </div>
           <button
             onClick={toggleTheme}
@@ -197,7 +197,7 @@ export default function Home() {
       {/* Footer */}
       <footer className="border-t border-zinc-200 dark:border-zinc-800 py-8">
         <div className="max-w-6xl mx-auto px-6 flex items-center justify-between">
-          <p className="text-sm text-zinc-400">© AI Store. Built for Learners.</p>
+          <p className="text-sm text-zinc-400">© Agora. Built for Learners.</p>
         </div>
       </footer>
     </div>

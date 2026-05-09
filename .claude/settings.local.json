@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git push *)",
+      "Bash(security delete-internet-password *)",
+      "Bash(git config *)",
+      "Bash(security find-internet-password *)",
+      "Bash(cat ~/.netrc 2>&1; git config --global credential.helper 2>&1)",
+      "Read(//Users/test/**)",
+      "Bash(security dump-keychain *)",
+      "Bash(git credential *)",
+      "Bash(security find-generic-password *)",
+      "Bash(git remote *)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
+    ]
+  }
+}
