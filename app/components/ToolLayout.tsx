@@ -229,7 +229,14 @@ export default function ToolLayout({
         body: JSON.stringify({ messages: newMessages, systemPrompt }),
       })
       const data = await res.json()
-      const assistantContent = data.text || 'Something went wrong. Please try again.'
+
+      let assistantContent: string
+      if (data.error) {
+        assistantContent = `**Something went wrong.**\n\nError details: ${data.error}\n\nFeel free to ask me what this error means or how to fix it.`
+      } else {
+        assistantContent = data.text || 'No response received.'
+      }
+
       setMessages([...newMessages, { role: 'assistant', content: assistantContent }])
 
       // Detect Forge app in response
@@ -237,8 +244,12 @@ export default function ToolLayout({
         const app = parseForgeApp(assistantContent)
         if (app) setDetectedForgeApp(app)
       }
-    } catch {
-      setMessages([...newMessages, { role: 'assistant', content: 'Something went wrong. Please try again.' }])
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      setMessages([...newMessages, {
+        role: 'assistant',
+        content: `**Network error.** Could not reach the server.\n\nDetails: ${errMsg}\n\nCheck your connection and try again, or ask me what this means.`,
+      }])
     } finally {
       setLoading(false)
     }

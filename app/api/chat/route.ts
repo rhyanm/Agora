@@ -37,17 +37,15 @@ function buildMessageContent(msg: IncomingMessage): Anthropic.MessageParam {
         },
       })
     } else if (file.isPdf) {
-      // PDF document type supported by Claude
       blocks.push({
         type: 'document',
         source: {
           type: 'base64',
-          media_type: 'application/pdf',
+          media_type: 'application/pdf' as const,
           data: file.data,
         },
       } as Anthropic.ContentBlockParam)
     } else {
-      // Text or unknown file — send as text block
       blocks.push({
         type: 'text',
         text: `[File: ${file.name} (${file.mimeType})]\n${file.data}`,
@@ -70,23 +68,34 @@ export async function POST(req: NextRequest) {
 
     const hasPdf = messages.some(m => m.files?.some(f => f.isPdf))
 
-    const createParams = {
-      model: 'claude-sonnet-4-6' as const,
-      max_tokens: 4096,
+    // Pass PDF beta as a request header, not in the params body
+    const requestOptions = hasPdf
+      ? { headers: { 'anthropic-beta': 'pdfs-2024-09-25' } }
+      : {}
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const baseParams: any = {
+      model: 'claude-opus-4-7',
+      max_tokens: 8000,
+      thinking: { type: 'adaptive' },
       system: systemPrompt,
-      tools: [{ type: 'web_search_20260209' as const, name: 'web_search' as const }],
-      stream: false as const,
-      ...(hasPdf ? { betas: ['pdfs-2024-09-25'] } : {}),
+      tools: [{ type: 'web_search_20260209', name: 'web_search' }],
     }
 
-    let response = await client.messages.create({ ...createParams, messages: currentMessages })
+    let response = await client.messages.create(
+      { ...baseParams, messages: currentMessages },
+      requestOptions
+    )
 
     while (response.stop_reason === 'pause_turn') {
       currentMessages = [
         ...currentMessages,
         { role: 'assistant' as const, content: response.content },
       ]
-      response = await client.messages.create({ ...createParams, messages: currentMessages })
+      response = await client.messages.create(
+        { ...baseParams, messages: currentMessages },
+        requestOptions
+      )
     }
 
     const text = response.content
@@ -97,7 +106,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ text })
   } catch (err: unknown) {
     console.error('API Error:', err)
-    const message = err instanceof Error ? err.message : 'Unknown error'
+    const message = err instanceof Error ? err.message : String(err)
     return NextResponse.json({ error: message }, { status: 500 })
   }
 }
