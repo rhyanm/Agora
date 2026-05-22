@@ -131,10 +131,10 @@ export default function Home() {
         <div className="max-w-2xl">
           <p className="text-sm font-medium text-indigo-500 dark:text-indigo-400 mb-3 tracking-wide uppercase">Purpose-built AI</p>
           <h1 className="text-5xl font-bold text-zinc-900 dark:text-white leading-tight mb-4">
-            Tools that know<br />what they're doing.
+            Tools that know<br />what they&apos;re doing.
           </h1>
           <p className="text-lg text-zinc-500 dark:text-zinc-400 leading-relaxed">
-            Every app is spec'd for a specific job. No guessing, no generic chatbot. Pick your tool, describe your situation, get a confident answer.
+            Every app is spec&apos;d for a specific job. No guessing, no generic chatbot. Pick your tool, describe your situation, get a confident answer.
           </p>
         </div>
       </section>
