@@ -12,14 +12,37 @@ export async function POST(req: NextRequest) {
 
     const { messages, systemPrompt } = await req.json()
 
-    const response = await client.messages.create({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let currentMessages: any[] = messages
+
+    let response = await client.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
+      max_tokens: 2048,
       system: systemPrompt,
-      messages,
+      messages: currentMessages,
+      tools: [{ type: 'web_search_20260209', name: 'web_search' }],
     })
 
-    const text = response.content[0].type === 'text' ? response.content[0].text : ''
+    // Server-side web search may pause mid-loop; re-send until done
+    while (response.stop_reason === 'pause_turn') {
+      currentMessages = [
+        ...currentMessages,
+        { role: 'assistant', content: response.content },
+      ]
+      response = await client.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 2048,
+        system: systemPrompt,
+        messages: currentMessages,
+        tools: [{ type: 'web_search_20260209', name: 'web_search' }],
+      })
+    }
+
+    const text = response.content
+      .filter((block): block is Anthropic.TextBlock => block.type === 'text')
+      .map(block => block.text)
+      .join('\n\n')
+
     return NextResponse.json({ text })
   } catch (err: unknown) {
     console.error('API Error:', err)
