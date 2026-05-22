@@ -27,7 +27,17 @@ interface AuthContextType {
   changePassword: (currentPassword: string, newPassword: string) => Promise<{ success: boolean; error?: string }>
 }
 
-const AuthContext = createContext<AuthContextType | null>(null)
+const defaultAuth: AuthContextType = {
+  user: null,
+  loading: true,
+  login: async () => ({ success: false, error: 'Not initialized' }),
+  signup: async () => ({ success: false, error: 'Not initialized' }),
+  logout: () => {},
+  updateUser: () => {},
+  changePassword: async () => ({ success: false, error: 'Not initialized' }),
+}
+
+const AuthContext = createContext<AuthContextType>(defaultAuth)
 
 function simpleHash(s: string): string {
   let h = 0
@@ -117,7 +127,5 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 }
 
 export function useAuth() {
-  const ctx = useContext(AuthContext)
-  if (!ctx) throw new Error('useAuth must be inside AuthProvider')
-  return ctx
+  return useContext(AuthContext)
 }

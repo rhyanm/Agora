@@ -20,7 +20,11 @@ interface AppsContextType {
   deleteApp: (id: string) => void
 }
 
-const AppsContext = createContext<AppsContextType | null>(null)
+const AppsContext = createContext<AppsContextType>({
+  customApps: [],
+  saveApp: () => null,
+  deleteApp: () => {},
+})
 
 export function AppsProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth()
@@ -67,7 +71,5 @@ export function AppsProvider({ children }: { children: ReactNode }) {
 }
 
 export function useApps() {
-  const ctx = useContext(AppsContext)
-  if (!ctx) throw new Error('useApps must be inside AppsProvider')
-  return ctx
+  return useContext(AppsContext)
 }

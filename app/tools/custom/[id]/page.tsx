@@ -1,13 +1,14 @@
 'use client'
 
-import { use, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/app/context/AuthContext'
 import { useApps, CustomApp } from '@/app/context/AppsContext'
 import ToolLayout from '@/app/components/ToolLayout'
 
-export default function CustomAppPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params)
+// Next.js 14: params is a plain object, not a Promise (that's Next.js 15)
+export default function CustomAppPage({ params }: { params: { id: string } }) {
+  const { id } = params
   const router = useRouter()
   const { user } = useAuth()
   const { customApps } = useApps()
