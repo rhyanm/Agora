@@ -5,15 +5,56 @@ const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 })
 
+interface AttachedFile {
+  name: string
+  mimeType: string
+  data: string
+  isImage: boolean
+}
+
+interface IncomingMessage {
+  role: 'user' | 'assistant'
+  content: string
+  files?: AttachedFile[]
+}
+
+function buildMessageContent(msg: IncomingMessage): Anthropic.MessageParam {
+  if (msg.role === 'assistant' || !msg.files || msg.files.length === 0) {
+    return { role: msg.role, content: msg.content }
+  }
+
+  const blocks: Anthropic.ContentBlockParam[] = []
+
+  for (const file of msg.files) {
+    if (file.isImage) {
+      blocks.push({
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: file.mimeType as 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp',
+          data: file.data,
+        },
+      })
+    } else {
+      blocks.push({
+        type: 'text',
+        text: `[File: ${file.name}]\n${file.data}`,
+      })
+    }
+  }
+
+  if (msg.content) {
+    blocks.push({ type: 'text', text: msg.content })
+  }
+
+  return { role: 'user', content: blocks }
+}
+
 export async function POST(req: NextRequest) {
   try {
-    console.log('API route hit')
-    console.log('Key exists:', !!process.env.ANTHROPIC_API_KEY)
+    const { messages, systemPrompt }: { messages: IncomingMessage[]; systemPrompt: string } = await req.json()
 
-    const { messages, systemPrompt } = await req.json()
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let currentMessages: any[] = messages
+    let currentMessages: Anthropic.MessageParam[] = messages.map(buildMessageContent)
 
     let response = await client.messages.create({
       model: 'claude-sonnet-4-6',
@@ -23,7 +64,6 @@ export async function POST(req: NextRequest) {
       tools: [{ type: 'web_search_20260209', name: 'web_search' }],
     })
 
-    // Server-side web search may pause mid-loop; re-send until done
     while (response.stop_reason === 'pause_turn') {
       currentMessages = [
         ...currentMessages,
