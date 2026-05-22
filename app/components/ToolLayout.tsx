@@ -23,7 +23,6 @@ export default function ToolLayout({
   name,
   tagline,
   icon,
-  accent: _accent,
   systemPrompt,
   placeholder,
   starterPrompts = [],
