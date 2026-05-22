@@ -10,6 +10,7 @@ interface AttachedFile {
   mimeType: string
   data: string
   isImage: boolean
+  isPdf: boolean
 }
 
 interface IncomingMessage {
@@ -35,10 +36,21 @@ function buildMessageContent(msg: IncomingMessage): Anthropic.MessageParam {
           data: file.data,
         },
       })
+    } else if (file.isPdf) {
+      // PDF document type supported by Claude
+      blocks.push({
+        type: 'document',
+        source: {
+          type: 'base64',
+          media_type: 'application/pdf',
+          data: file.data,
+        },
+      } as Anthropic.ContentBlockParam)
     } else {
+      // Text or unknown file — send as text block
       blocks.push({
         type: 'text',
-        text: `[File: ${file.name}]\n${file.data}`,
+        text: `[File: ${file.name} (${file.mimeType})]\n${file.data}`,
       })
     }
   }
@@ -56,31 +68,30 @@ export async function POST(req: NextRequest) {
 
     let currentMessages: Anthropic.MessageParam[] = messages.map(buildMessageContent)
 
-    let response = await client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 2048,
+    const hasPdf = messages.some(m => m.files?.some(f => f.isPdf))
+
+    const createParams = {
+      model: 'claude-sonnet-4-6' as const,
+      max_tokens: 4096,
       system: systemPrompt,
-      messages: currentMessages,
-      tools: [{ type: 'web_search_20260209', name: 'web_search' }],
-    })
+      tools: [{ type: 'web_search_20260209' as const, name: 'web_search' as const }],
+      stream: false as const,
+      ...(hasPdf ? { betas: ['pdfs-2024-09-25'] } : {}),
+    }
+
+    let response = await client.messages.create({ ...createParams, messages: currentMessages })
 
     while (response.stop_reason === 'pause_turn') {
       currentMessages = [
         ...currentMessages,
-        { role: 'assistant', content: response.content },
+        { role: 'assistant' as const, content: response.content },
       ]
-      response = await client.messages.create({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 2048,
-        system: systemPrompt,
-        messages: currentMessages,
-        tools: [{ type: 'web_search_20260209', name: 'web_search' }],
-      })
+      response = await client.messages.create({ ...createParams, messages: currentMessages })
     }
 
     const text = response.content
       .filter((block): block is Anthropic.TextBlock => block.type === 'text')
-      .map(block => block.text)
+      .map((block: Anthropic.TextBlock) => block.text)
       .join('\n\n')
 
     return NextResponse.json({ text })

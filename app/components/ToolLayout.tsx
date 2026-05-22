@@ -1,22 +1,34 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, Send, Loader2, RotateCcw, Paperclip, X } from 'lucide-react'
+import { ArrowLeft, Send, Loader2, RotateCcw, Paperclip, X, Save, Download, LogIn } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { useAuth } from '@/app/context/AuthContext'
+import { useApps } from '@/app/context/AppsContext'
+import { generateAppDownload } from '@/app/lib/generateAppDownload'
 
 interface AttachedFile {
   name: string
   mimeType: string
   data: string
   isImage: boolean
+  isPdf: boolean
 }
 
 interface Message {
   role: 'user' | 'assistant'
   content: string
   files?: AttachedFile[]
+}
+
+interface ForgeApp {
+  name: string
+  icon: string
+  tagline: string
+  description: string
+  systemPrompt: string
 }
 
 interface ToolLayoutProps {
@@ -27,6 +39,7 @@ interface ToolLayoutProps {
   systemPrompt: string
   placeholder: string
   starterPrompts?: string[]
+  isForge?: boolean
 }
 
 function parseOptions(content: string): { cleanContent: string; options: string[] } {
@@ -38,11 +51,39 @@ function parseOptions(content: string): { cleanContent: string; options: string[
   return { cleanContent, options }
 }
 
-const ACCEPTED_TYPES = [
-  'image/png', 'image/jpeg', 'image/gif', 'image/webp',
-  'text/plain', 'text/markdown', 'text/csv',
-  'application/json', 'text/javascript', 'text/typescript',
-]
+function parseForgeApp(content: string): ForgeApp | null {
+  const match = content.match(/```json\s+forge-app\s*([\s\S]*?)```/i)
+    || content.match(/```forge-app\s*([\s\S]*?)```/i)
+  if (!match) return null
+  try {
+    return JSON.parse(match[1].trim())
+  } catch { return null }
+}
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result as string
+      resolve(result.split(',')[1] || result)
+    }
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
+function readFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = reject
+    reader.readAsText(file)
+  })
+}
+
+const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
+const TEXT_TYPES = ['text/plain', 'text/markdown', 'text/csv', 'text/html', 'text/css', 'text/javascript',
+  'text/typescript', 'application/json', 'application/xml', 'application/javascript']
 
 export default function ToolLayout({
   name,
@@ -51,6 +92,7 @@ export default function ToolLayout({
   systemPrompt,
   placeholder,
   starterPrompts = [],
+  isForge = false,
 }: ToolLayoutProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
@@ -58,10 +100,15 @@ export default function ToolLayout({
   const [started, setStarted] = useState(false)
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([])
   const [isDragging, setIsDragging] = useState(false)
+  const [selectedOptions, setSelectedOptions] = useState<string[]>([])
+  const [detectedForgeApp, setDetectedForgeApp] = useState<ForgeApp | null>(null)
+  const [forgeSaved, setForgeSaved] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const router = useRouter()
+  const { user } = useAuth()
+  const { saveApp } = useApps()
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -72,25 +119,41 @@ export default function ToolLayout({
     setStarted(false)
     setInput('')
     setAttachedFiles([])
+    setSelectedOptions([])
+    setDetectedForgeApp(null)
+    setForgeSaved(false)
   }
 
-  function processFiles(files: File[]) {
-    files.forEach(file => {
-      if (!ACCEPTED_TYPES.includes(file.type)) return
-      const isImage = file.type.startsWith('image/')
-      const reader = new FileReader()
-      reader.onload = (e) => {
-        const result = e.target?.result as string
-        const data = isImage ? result.split(',')[1] : result
-        setAttachedFiles(prev => [...prev, { name: file.name, mimeType: file.type, data, isImage }])
+  const processFiles = useCallback(async (files: File[]) => {
+    const processed: AttachedFile[] = []
+    for (const file of files) {
+      const isImage = IMAGE_TYPES.includes(file.type)
+      const isPdf = file.type === 'application/pdf'
+      const isText = TEXT_TYPES.includes(file.type) || file.name.match(/\.(txt|md|csv|json|js|ts|tsx|jsx|html|css|xml|yaml|yml|toml|ini|sh|py|rb|go|rs|java|kt|swift|sql|graphql)$/i)
+
+      try {
+        if (isImage || isPdf) {
+          const data = await readFileAsBase64(file)
+          processed.push({ name: file.name, mimeType: file.type, data, isImage, isPdf })
+        } else if (isText) {
+          const data = await readFileAsText(file)
+          processed.push({ name: file.name, mimeType: file.type || 'text/plain', data, isImage: false, isPdf: false })
+        } else {
+          // Try reading as text, fall back to base64
+          try {
+            const data = await readFileAsText(file)
+            processed.push({ name: file.name, mimeType: file.type || 'application/octet-stream', data, isImage: false, isPdf: false })
+          } catch {
+            const data = await readFileAsBase64(file)
+            processed.push({ name: file.name, mimeType: file.type || 'application/octet-stream', data, isImage: false, isPdf: false })
+          }
+        }
+      } catch (err) {
+        console.warn(`Could not process ${file.name}:`, err)
       }
-      if (isImage) {
-        reader.readAsDataURL(file)
-      } else {
-        reader.readAsText(file)
-      }
-    })
-  }
+    }
+    setAttachedFiles(prev => [...prev, ...processed])
+  }, [])
 
   function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
     if (e.target.files) processFiles(Array.from(e.target.files))
@@ -118,17 +181,46 @@ export default function ToolLayout({
     setAttachedFiles(prev => prev.filter((_, i) => i !== index))
   }
 
+  function toggleOption(opt: string) {
+    setSelectedOptions(prev =>
+      prev.includes(opt) ? prev.filter(o => o !== opt) : [...prev, opt]
+    )
+  }
+
+  function clearSelectedOptions() {
+    setSelectedOptions([])
+  }
+
   async function send(text?: string) {
-    const content = text || input.trim()
+    let content: string
+    if (text !== undefined) {
+      content = text
+    } else {
+      const parts: string[] = []
+      if (selectedOptions.length > 0) parts.push(selectedOptions.join(', '))
+      if (input.trim()) parts.push(input.trim())
+      content = parts.join('\n')
+    }
+
     if ((!content && attachedFiles.length === 0) || loading) return
 
-    const userMessage: Message = { role: 'user', content: content || '', files: attachedFiles.length > 0 ? [...attachedFiles] : undefined }
+    const userMessage: Message = {
+      role: 'user',
+      content: content || '',
+      files: attachedFiles.length > 0 ? [...attachedFiles] : undefined,
+    }
     const newMessages = [...messages, userMessage]
     setMessages(newMessages)
     setInput('')
     setAttachedFiles([])
+    setSelectedOptions([])
     setLoading(true)
     setStarted(true)
+
+    // Reset textarea height
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto'
+    }
 
     try {
       const res = await fetch('/api/chat', {
@@ -137,7 +229,14 @@ export default function ToolLayout({
         body: JSON.stringify({ messages: newMessages, systemPrompt }),
       })
       const data = await res.json()
-      setMessages([...newMessages, { role: 'assistant', content: data.text || 'Something went wrong. Please try again.' }])
+      const assistantContent = data.text || 'Something went wrong. Please try again.'
+      setMessages([...newMessages, { role: 'assistant', content: assistantContent }])
+
+      // Detect Forge app in response
+      if (isForge) {
+        const app = parseForgeApp(assistantContent)
+        if (app) setDetectedForgeApp(app)
+      }
     } catch {
       setMessages([...newMessages, { role: 'assistant', content: 'Something went wrong. Please try again.' }])
     } finally {
@@ -152,7 +251,35 @@ export default function ToolLayout({
     }
   }
 
-  const canSend = (input.trim().length > 0 || attachedFiles.length > 0) && !loading
+  function handleSaveForgeApp() {
+    if (!detectedForgeApp || !user) return
+    const saved = saveApp({
+      name: detectedForgeApp.name,
+      icon: detectedForgeApp.icon,
+      tagline: detectedForgeApp.tagline,
+      description: detectedForgeApp.description,
+      systemPrompt: detectedForgeApp.systemPrompt,
+    })
+    if (saved) {
+      setForgeSaved(true)
+    }
+  }
+
+  function handleDownloadForgeApp() {
+    if (!detectedForgeApp) return
+    generateAppDownload({
+      id: 'preview',
+      name: detectedForgeApp.name,
+      icon: detectedForgeApp.icon,
+      tagline: detectedForgeApp.tagline,
+      description: detectedForgeApp.description,
+      systemPrompt: detectedForgeApp.systemPrompt,
+      createdAt: new Date().toISOString(),
+      userId: user?.id || 'anon',
+    })
+  }
+
+  const canSend = (input.trim().length > 0 || attachedFiles.length > 0 || selectedOptions.length > 0) && !loading
 
   return (
     <div
@@ -163,11 +290,11 @@ export default function ToolLayout({
     >
       {/* Drag overlay */}
       {isDragging && (
-        <div className="absolute inset-0 z-50 bg-indigo-500/10 border-2 border-dashed border-indigo-400 rounded-none flex items-center justify-center pointer-events-none">
+        <div className="absolute inset-0 z-50 bg-indigo-500/10 border-2 border-dashed border-indigo-400 flex items-center justify-center pointer-events-none">
           <div className="bg-white dark:bg-zinc-900 rounded-2xl px-8 py-6 shadow-xl text-center">
             <p className="text-2xl mb-2">📎</p>
             <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">Drop files here</p>
-            <p className="text-xs text-zinc-400 mt-1">Images, text, CSV, JSON</p>
+            <p className="text-xs text-zinc-400 mt-1">Any file type accepted</p>
           </div>
         </div>
       )}
@@ -252,7 +379,7 @@ export default function ToolLayout({
                       </div>
                     )}
                     {msg.content && (
-                      <div className="max-w-[80%] px-4 py-3 rounded-2xl rounded-br-sm text-sm leading-relaxed bg-indigo-500 text-white">
+                      <div className="max-w-[80%] px-4 py-3 rounded-2xl rounded-br-sm text-sm leading-relaxed bg-indigo-500 text-white whitespace-pre-wrap">
                         {msg.content}
                       </div>
                     )}
@@ -261,27 +388,98 @@ export default function ToolLayout({
               }
 
               const { cleanContent, options } = parseOptions(msg.content)
+              const isLastAssistant = i === messages.length - 1 && msg.role === 'assistant'
+              const forgeApp = isForge ? parseForgeApp(msg.content) : null
+
+              // Strip the forge-app code block from display
+              const displayContent = forgeApp
+                ? cleanContent.replace(/```json\s+forge-app[\s\S]*?```/gi, '').replace(/```forge-app[\s\S]*?```/gi, '').trim()
+                : cleanContent
+
               return (
                 <div key={i} className="flex justify-start flex-col gap-2">
                   <div className="flex items-start gap-3">
                     <span className="text-lg mt-1 flex-shrink-0">{icon}</span>
-                    <div className="max-w-[80%] px-4 py-3 rounded-2xl rounded-bl-sm text-sm leading-relaxed bg-zinc-100 dark:bg-zinc-900 text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-800 prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-headings:my-2 prose-li:my-0.5 prose-pre:bg-zinc-200 dark:prose-pre:bg-zinc-800">
+                    <div className="max-w-[80%] px-4 py-3 rounded-2xl rounded-bl-sm text-sm leading-relaxed bg-zinc-100 dark:bg-zinc-900 text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-800 prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-headings:my-2 prose-li:my-0.5">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {cleanContent}
+                        {displayContent}
                       </ReactMarkdown>
                     </div>
                   </div>
+
+                  {/* Forge app save banner */}
+                  {forgeApp && isLastAssistant && (
+                    <div className="ml-10 p-4 rounded-xl bg-orange-50 dark:bg-orange-950/20 border border-orange-200 dark:border-orange-800">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-xl">{forgeApp.icon}</span>
+                        <div>
+                          <p className="text-sm font-bold text-zinc-900 dark:text-white">{forgeApp.name} is ready</p>
+                          <p className="text-xs text-zinc-500">{forgeApp.tagline}</p>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        {user ? (
+                          <>
+                            <button
+                              onClick={handleSaveForgeApp}
+                              disabled={forgeSaved}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-500 hover:bg-orange-600 disabled:bg-green-500 text-white text-xs font-semibold transition-colors"
+                            >
+                              <Save size={12} />
+                              {forgeSaved ? 'Saved to My Apps!' : 'Save to My Apps'}
+                            </button>
+                            <button
+                              onClick={handleDownloadForgeApp}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-orange-200 dark:border-orange-700 text-orange-600 dark:text-orange-400 hover:bg-orange-100 dark:hover:bg-orange-900/30 text-xs font-semibold transition-colors"
+                            >
+                              <Download size={12} />
+                              Download for desktop
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              onClick={handleDownloadForgeApp}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold transition-colors"
+                            >
+                              <Download size={12} />
+                              Download for desktop
+                            </button>
+                            <button
+                              onClick={() => router.push('/auth/signup')}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-orange-200 dark:border-orange-700 text-orange-600 dark:text-orange-400 hover:bg-orange-100 dark:hover:bg-orange-900/30 text-xs font-semibold transition-colors"
+                            >
+                              <LogIn size={12} />
+                              Sign up to save
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Option buttons — multi-select */}
                   {options.length > 0 && (
-                    <div className="ml-10 flex flex-wrap gap-2">
-                      {options.map((opt, oi) => (
-                        <button
-                          key={oi}
-                          onClick={() => send(opt)}
-                          className="text-xs px-3 py-1.5 rounded-full border border-indigo-300 dark:border-indigo-700 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950 transition-colors"
-                        >
-                          {opt}
-                        </button>
-                      ))}
+                    <div className="ml-10 flex flex-col gap-2">
+                      <p className="text-xs text-zinc-400">Select one or more, then add context below and press send:</p>
+                      <div className="flex flex-wrap gap-2">
+                        {options.map((opt, oi) => {
+                          const isSelected = selectedOptions.includes(opt)
+                          return (
+                            <button
+                              key={oi}
+                              onClick={() => toggleOption(opt)}
+                              className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
+                                isSelected
+                                  ? 'bg-indigo-500 border-indigo-500 text-white'
+                                  : 'border-indigo-300 dark:border-indigo-700 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950'
+                              }`}
+                            >
+                              {opt}
+                            </button>
+                          )
+                        })}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -303,6 +501,25 @@ export default function ToolLayout({
       {/* Input */}
       <div className="sticky bottom-0 bg-white/90 dark:bg-zinc-950/90 backdrop-blur-md border-t border-zinc-200 dark:border-zinc-800">
         <div className="max-w-4xl mx-auto px-6 py-4">
+
+          {/* Selected options chips */}
+          {selectedOptions.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              <span className="text-xs text-zinc-400">Selected:</span>
+              {selectedOptions.map((opt, i) => (
+                <div key={i} className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 text-xs font-medium border border-indigo-200 dark:border-indigo-800">
+                  {opt}
+                  <button onClick={() => toggleOption(opt)} className="ml-0.5 opacity-60 hover:opacity-100">
+                    <X size={10} />
+                  </button>
+                </div>
+              ))}
+              <button onClick={clearSelectedOptions} className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200">
+                Clear
+              </button>
+            </div>
+          )}
+
           {/* File chips */}
           {attachedFiles.length > 0 && (
             <div className="flex flex-wrap gap-2 mb-3">
@@ -327,14 +544,14 @@ export default function ToolLayout({
               ref={fileInputRef}
               type="file"
               multiple
-              accept=".png,.jpg,.jpeg,.gif,.webp,.txt,.md,.csv,.json,.js,.ts"
+              accept="*"
               className="hidden"
               onChange={handleFileInput}
             />
             <button
               onClick={() => fileInputRef.current?.click()}
               className="w-11 h-11 rounded-xl border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center justify-center transition-colors flex-shrink-0 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
-              title="Attach file"
+              title="Attach file (any type)"
             >
               <Paperclip size={16} />
             </button>
@@ -343,7 +560,7 @@ export default function ToolLayout({
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={placeholder}
+              placeholder={selectedOptions.length > 0 ? 'Add more context (optional)...' : placeholder}
               rows={1}
               className="flex-1 resize-none bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-900 dark:text-white placeholder-zinc-400 focus:outline-none focus:border-indigo-400 dark:focus:border-indigo-500 transition-colors min-h-[46px] max-h-40"
               style={{ height: 'auto' }}
@@ -361,7 +578,7 @@ export default function ToolLayout({
               <Send size={16} className="text-white" />
             </button>
           </div>
-          <p className="text-xs text-zinc-400 text-center mt-2">Press Enter to send · Shift+Enter for new line · Drop files anywhere</p>
+          <p className="text-xs text-zinc-400 text-center mt-2">Enter to send · Shift+Enter for new line · Drop files anywhere</p>
         </div>
       </div>
     </div>
